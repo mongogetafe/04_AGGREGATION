@@ -127,28 +127,154 @@ db.pedidos.aggregate([
     {$project: {skuProducto: "$_id", cantidadPromedioPedido: 1, _id: 0}},
 ])
 
+// Para crear arrays
+
+use biblioteca
+
+db.libros.aggregate([
+    {$group: {_id: "$autor", libros: {$push: "$titulo"}}},
+    {$project: {autor: "$_id", libros: 1, _id: 0}}
+])
+
+
+// Con varios campos como agrupadores
+
+use maraton
+
+db.participantes.aggregate([
+    {$group: {_id: {nombre: "$nombre", edad: "$edad"}, totalMismoNombreMismaEdad: {$sum: 1}}},
+    {$project: {nombre: "$_id.nombre", edad: "$_id.edad", total: "$totalMismoNombreMismaEdad", _id: 0}}
+])
 
 
 
+// $unwind Deconstruye un array en sus elementos
 
+use shop2
 
+db.productos.insert([
+    {nombre: "Camiseta", marca: "Nike", tallas: ["xs","s","m","l","xl"]},
+    {nombre: "Camiseta", marca: "Puma", tallas: null},
+    {nombre: "Camiseta", marca: "Adidas"}
+])
 
+db.productos.aggregate([
+    {$unwind: "$tallas"},
+    {$project: {_id: 0, nombre: 1, marca: 1, talla: "$tallas"}}
+])
+
+// Opciones de $unwind
+
+db.productos.aggregate([
+    {$unwind: {path:"$tallas", includeArrayIndex: "orden"}}, // pasar a un campo la posición en el array original
+    {$project: {_id: 0, nombre: 1, marca: 1, talla: "$tallas", orden: 1}}
+])
+
+db.productos.aggregate([
+    {$unwind: {path:"$tallas", preserveNullAndEmptyArrays: true}}, // mantiene los que no tengan el campo o lo tengan null
+    {$project: {_id: 0, nombre: 1, marca: 1, talla: "$tallas"}}
+])
+
+// Otro ejemplo Actividades favoritas de los clientes
+
+use gimnasio2
+
+db.clientes.aggregate([
+    {$unwind: "$actividades"},
+    {$group: {_id: "$actividades", total: {$sum: 1}}},
+    {$project: {actividad: "$_id", total: 1, _id: 0}},
+    {$sort: {total: -1}}
+])
 
 
 // $match
 
+// Sintaxis en el documento que las consultas con find, findOne, update, etc...
+
+use maraton
+
+db.participantes.aggregate([
+    {$match: {$and: [{edad: {$gte: 40}}, {edad: {$lt: 50}}]}},
+    {$group: {_id: "$edad", total: {$sum: 1}}},
+    {$project: {edad: "$_id", total: 1, _id: 0}}
+])
+
+// Uso de índices (https://docs.mongodb.com/master/core/aggregation-pipeline/#pipeline-operators-and-indexes)
+
+db.participantes.explain("allPlansExecution").aggregate([
+    {$match: {nombre: "Laura"}},
+    {$group: {_id: "$edad", total: {$sum: 1}}}, // No coge el índice para edad
+    {$project: {edad: "$_id", total: 1, _id: 0}}
+])
+
+// Ejemplo con palabras
+
+use shop2
+
+db.opiniones.insert([
+    {sku: "v102", user: "00012", opinion: "buen servicio pero producto en mal estado"},
+    {sku: "v102", user: "00013", opinion: "muy satisfecho con la compra"},
+    {sku: "v102", user: "00014", opinion: "muy mal, tuve que devolverlo"},
+    {sku: "v103", user: "00014", opinion: "perfecto en todos los sentidos"},
+    {sku: "v102", user: "00015", opinion: "mal, no volveré a comprar"},
+])
+
+db.opiniones.createIndex({opinion: "text"})
+
+db.opiniones.aggregate([
+    {$match: {$text: {$search: "mal"}}},
+    {$group: {_id: "$sku", malasOpiniones: {$sum: 1}}},
+    {$project: {sku: "$_id", malasOpiniones: 1, _id: 0}}
+])
+
+db.opiniones.aggregate([
+    {$match: {$text: {$search: "buen perfecto"}}},
+    {$group: {_id: "$sku", buenasOpiniones: {$sum: 1}}},
+    {$project: {sku: "$_id", buenasOpiniones: 1, _id: 0}}
+])
 
 // En niveles inferiores
 
-db.clientes.insert(
-    {
-        nombre: "Juan", 
+db.clientes.insert([{
+        nombre: "Carlos", 
         apellidos: "Pérez", 
         alta: new Date(2020,9,5), 
         actividades:[
             {nombre: "padel", activo: true, turno: 'mañana'},
-            {nombre: "esgrima", activo: false, turno: 'mañana'},
+            {nombre: "esgrima", activo: true, turno: 'mañana'},
             {nombre: "tenis", activo: true, turno: 'tarde'}
         ]
     }
+])
+
+db.clientes.find(
+    {actividades: {$elemMatch: {nombre: "tenis", activo: true}}},
+    {nombre: 1, apellidos: 1, _id: 0, actividades: {$elemMatch: {nombre: "tenis", activo: true}}}
 )
+
+// Con agregación
+
+db.clientes.aggregate([
+    {$unwind: "$actividades"},
+    {$match: {"actividades.nombre": "tenis", "actividades.activo": true}},
+    {$project: {_id: 0, nombre: 1, apellidos: 1, deporte: "$actividades.nombre", turno: "$actividades.turno"}}
+])
+
+// $addFields
+
+use maraton
+
+db.resultados.insert([
+    {nombre: "Juan", llegada: new Date("2020-11-01T16:31:40")},
+    {nombre: "Laura", llegada: new Date("2020-11-01T15:43:40")},
+    {nombre: "Pedro", llegada: new Date("2020-11-01T17:10:40")},
+])
+
+db.resultados.aggregate([
+    {$addFields: {tiempo: {$subtract: ["$llegada", new Date("2020-11-01T12:00:00")]}}},
+    {$addFields: {horas: {$floor: {$mod: [{$divide: ["$tiempo", 1000 * 60 * 60]}, 24]}}}},
+    {$addFields: {minutos: {$floor: {$mod: [{$divide: ["$tiempo", 1000 * 60]}, 60]}}}},
+    {$addFields: {segundos: {$mod: [{$divide: ["$tiempo", 1000]}, 60]}}},
+    {$sort: {tiempo: 1}},
+    {$project: {nombre: 1, horas: 1, minutos: 1, segundos: 1, _id: 0}}
+])
