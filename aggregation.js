@@ -278,3 +278,132 @@ db.resultados.aggregate([
     {$sort: {tiempo: 1}},
     {$project: {nombre: 1, horas: 1, minutos: 1, segundos: 1, _id: 0}}
 ])
+
+// $skip <entero> Cada uno en su etapa
+
+// $limit <entero> 
+
+// $merge (Salida a otra colección) (Sustituye a $out)
+
+db.participantes.aggregate([
+    {$match: {$and: [{edad: {$gte: 50}}, {edad: {$lt: 60}}]}},
+    {$group: {_id: "$edad", total: {$sum: 1}}},
+    {$project: {edad: "$_id", total: 1, _id: 0}},
+    {$merge: "resumen"}
+])
+
+// Salida a otra base de datos
+
+db.participantes.aggregate([
+    {$match: {$and: [{edad: {$gte: 50}}, {edad: {$lt: 60}}]}},
+    {$group: {_id: "$edad", total: {$sum: 1}}},
+    {$project: {edad: "$_id", total: 1, _id: 0}},
+    {$merge: {
+        into: {db: "maratonMadrid", coll: "resumenMadrid"}
+    }}
+])
+
+// Control de la actualización o inserción de documentos
+
+db.participantes.aggregate([
+    {$match: {nombre: "Carlos"}},
+    {$limit: 10},
+    {$addFields: {fecha: new Date()}},
+    {$merge: {
+        into: {db: "maratonMadrid", coll: "resumenCarlos"},
+        on: "_id",
+        whenMatched: "keepExisting",
+        whenNotMatched: "insert"
+    }}
+])
+
+// $lookup un tipo de join en MongoDB (left outer)
+// Sintaxis
+// { $lookup:
+        // {
+        //     from: <colección-externa>,
+        //     localField: <campo de la colección>,
+        //     foreignField: <campo de la colección externa>,
+        //     as: <campo de salida (array)>
+        // }
+// }
+
+use shop3
+
+db.pedidos.insert([
+    {_id: 1, items: [
+            {codigo: "a01", precio: 12, cantidad: 2},
+            {codigo: "j02", precio: 10, cantidad: 4},
+        ]
+    },
+    {_id: 2, items: [
+            {codigo: "j01", precio: 20, cantidad: 1}
+        ]
+    },
+    {_id: 3, items: [
+            {codigo: "j01", precio: 20, cantidad: 4}
+        ]
+    },
+    {_id: 4, items: []}
+
+])
+
+db.productos.insert([
+    {_id: 1, codigo: "a01", descripcion: "producto 1", stock: 120},
+    {_id: 2, codigo: "d01", descripcion: "producto 2", stock: 80},
+    {_id: 3, codigo: "j01", descripcion: "producto 3", stock: 60},
+    {_id: 4, codigo: "j02", descripcion: "producto 4", stock: 70},
+])
+
+// Operación para obtener desde la colección pedidos los datos de cada producto comprado
+
+db.pedidos.aggregate([
+    {$unwind: {path: "$items", preserveNullAndEmptyArrays: true}},
+    {$lookup: {
+        from: "productos",
+        localField: "items.codigo",
+        foreignField: "codigo",
+        as: "producto"
+    }},
+    {$unwind: {path: "$producto", preserveNullAndEmptyArrays: true}},
+    {$project: {
+            numeroPedido: "$_id", 
+            producto: "$items.codigo", 
+            descripcion: "$producto.descripcion",
+            stock: "$producto.stock",
+            cantidad: "$items.cantidad",
+            precio: "$items.precio",
+            _id: 0
+        }
+    }
+])
+
+// Otro join de la colección contraria
+
+db.productos.aggregate([
+    {$lookup: {
+            from: "pedidos",
+            localField: "codigo",
+            foreignField: "items.codigo",
+            as: "pedidos"
+        }
+    },
+    {$unwind: {path: "$pedidos", preserveNullAndEmptyArrays: true}},
+    {$unwind: {path: "$pedidos.items", preserveNullAndEmptyArrays: true}},
+    {$match: {$or: [
+                    {$expr: {$eq: ["$codigo", "$pedidos.items.codigo"]}},
+                    {pedidos: {$exists: false}}
+                ] 
+            }
+    },  
+    {$project: {
+        _id: 0,
+        codigo: 1,
+        descripcion: 1,
+        stock: 1,
+        numeroPedido: "$pedidos._id",
+        precio: "$pedidos.items.precio",
+        cantidad: "$pedidos.items.cantidad"
+    }}
+
+])
